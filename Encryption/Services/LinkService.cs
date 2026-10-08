@@ -1,0 +1,204 @@
+﻿using Encryption.Data;
+using Encryption.DTO;
+using Encryption.Interfaces;
+using Encryption.Models.MongoDB;
+using Encryption.Models.SQL;
+using Encryption.Services.Interfaces;
+using Microsoft.EntityFrameworkCore;
+using MongoDB.Driver;
+
+namespace Encryption.Services;
+
+public class LinkService : ILinkService
+{
+    private readonly AppDbContext _sqlDbContext;
+    private readonly IMongoDbContext _mongoDbContext;
+    private readonly IEncryptionService _encryptionService;
+    private readonly ICacheService _cacheService;
+    private readonly ILogger<LinkService> _logger;
+
+    public LinkService(
+        AppDbContext sqlDbContext,
+        IMongoDbContext mongoDbContext,
+        IEncryptionService encryptionService,
+        ICacheService cacheService,
+        ILogger<LinkService> logger)
+    {
+        _sqlDbContext = sqlDbContext;
+        _mongoDbContext = mongoDbContext;
+        _encryptionService = encryptionService;
+        _cacheService = cacheService;
+        _logger = logger;
+    }
+
+    public async Task<CreateLinkResponseDto> CreateEncryptedLinkAsync(CreateLinkRequestDto dto, string ownerUserId)
+    {
+        string shortCode = GenerateShortCode();
+
+        var encResult = _encryptionService.Encrypt(dto.OriginalUrl, dto.Passphrase);
+
+        DateTime? expiresAt = dto.ExpiresInMinutes.HasValue && dto.ExpiresInMinutes.Value > 0
+            ? DateTime.UtcNow.AddMinutes(dto.ExpiresInMinutes.Value)
+            : null;
+
+        var meta = new EncryptedLinkMeta
+        {
+            ShortCode = shortCode,
+            BlindIndexHash = encResult.BlindIndexHash,
+            OwnerUserId = ownerUserId,
+            CreatedAt = DateTime.UtcNow,
+            ExpiresAt = expiresAt,
+            MaxAccessCount = dto.MaxAccessCount,
+            BurnOnRead = dto.BurnOnRead,
+            IsActive = true
+        };
+
+        _sqlDbContext.EncryptedLinkMetas.Add(meta);
+        await _sqlDbContext.SaveChangesAsync();
+
+        var doc = new EncryptedLinkDocument
+        {
+            ShortCode = shortCode,
+            UserId = ownerUserId,
+            EncryptedUrlPayload = encResult.CiphertextBase64,
+            IV = encResult.IvBase64,
+            Salt = encResult.SaltBase64,
+            AuthTag = encResult.AuthTagBase64,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _mongoDbContext.EncryptedLinks.InsertOneAsync(doc);
+
+        _logger.LogInformation("Created new encrypted link with ShortCode: {ShortCode} for user: {UserId}", shortCode, ownerUserId);
+
+        return new CreateLinkResponseDto
+        {
+            ShortCode = shortCode,
+            FullUrl = $"/api/links/{shortCode}",
+            ExpiresAt = expiresAt
+        };
+    }
+
+    public async Task<DecryptLinkResponseDto> DecryptLinkAsync(string shortCode, DecryptLinkRequestDto dto, string clientIp, string userAgent)
+    {
+
+        var meta = await _sqlDbContext.EncryptedLinkMetas
+            .FirstOrDefaultAsync(l => l.ShortCode == shortCode && l.IsActive);
+
+        if (meta == null)
+            throw new KeyNotFoundException("");
+
+        if (meta.ExpiresAt.HasValue && meta.ExpiresAt.Value < DateTime.UtcNow)
+        {
+            meta.IsActive = false;
+            await _sqlDbContext.SaveChangesAsync();
+            throw new InvalidOperationException("Platnosť tohto odkazu vypršala.");
+        }
+
+        if (meta.MaxAccessCount > 0 && meta.CurrentAccessCount >= meta.MaxAccessCount)
+        {
+            meta.IsActive = false;
+            await _sqlDbContext.SaveChangesAsync();
+            throw new InvalidOperationException("Bol dosiahnutý maximálny počet prístupov k tomuto odkazu.");
+        }
+
+        string cacheKey = $"link_doc:{shortCode}";
+        var doc = await _cacheService.GetAsync<EncryptedLinkDocument>(cacheKey);
+
+        if (doc == null)
+        {
+            doc = await _mongoDbContext.EncryptedLinks
+                .Find(d => d.ShortCode == shortCode)
+                .FirstOrDefaultAsync();
+
+            if (doc == null)
+                throw new KeyNotFoundException("Šifrovaný obsah nebol nájdený v databáze.");
+
+            await _cacheService.SetAsync(cacheKey, doc, TimeSpan.FromMinutes(5));
+        }
+
+        string decryptedUrl;
+        bool success = true;
+        string? failureReason = null;
+
+        try
+        {
+            decryptedUrl = _encryptionService.Decrypt(
+                doc.EncryptedUrlPayload,
+                doc.IV,
+                doc.Salt,
+                doc.AuthTag,
+                dto.Passphrase);
+        }
+        catch (Exception ex)
+        {
+            success = false;
+            failureReason = ex.Message;
+
+            await LogAccessAttemptAsync(shortCode, clientIp, userAgent, false, failureReason);
+
+            throw;
+        }
+
+        meta.CurrentAccessCount++;
+        bool isBurned = false;
+
+        if (meta.BurnOnRead || (meta.MaxAccessCount > 0 && meta.CurrentAccessCount >= meta.MaxAccessCount))
+        {
+            meta.IsActive = false;
+            isBurned = true;
+            await _cacheService.RemoveAsync(cacheKey);
+        }
+
+        await _sqlDbContext.SaveChangesAsync();
+
+        await LogAccessAttemptAsync(shortCode, clientIp, userAgent, true, null);
+
+        int remaining = meta.MaxAccessCount > 0 ? meta.MaxAccessCount - meta.CurrentAccessCount : -1;
+
+        return new DecryptLinkResponseDto
+        {
+            OriginalUrl = decryptedUrl,
+            RemainingAccesses = remaining,
+            IsBurned = isBurned
+        };
+    }
+
+    public async Task<IEnumerable<CreateLinkResponseDto>> GetUserLinksAsync(string userId)
+    {
+        var links = await _sqlDbContext.EncryptedLinkMetas
+            .Where(l => l.OwnerUserId == userId && l.IsActive)
+            .OrderByDescending(l => l.CreatedAt)
+            .ToListAsync();
+
+        return links.Select(l => new CreateLinkResponseDto
+        {
+            ShortCode = l.ShortCode,
+            FullUrl = $"/api/links/{l.ShortCode}",
+            ExpiresAt = l.ExpiresAt
+        });
+    }
+
+    private async Task LogAccessAttemptAsync(string shortCode, string clientIp, string userAgent, bool success, string? failureReason)
+    {
+        var filter = Builders<EncryptedLinkDocument>.Filter.Eq(d => d.ShortCode, shortCode);
+        var update = Builders<EncryptedLinkDocument>.Update.Push(d => d.AccessLogs, new LinkAccessLog
+        {
+            Timestamp = DateTime.UtcNow,
+            IpAddressHash = _encryptionService.GenerateBlindIndex(clientIp, "IpHashPepper"),
+            UserAgent = userAgent,
+            Success = success,
+            FailureReason = failureReason
+        });
+
+        await _mongoDbContext.EncryptedLinks.UpdateOneAsync(filter, update);
+    }
+
+    private static string GenerateShortCode()
+    {
+        const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        var random = new Random();
+        return new string(Enumerable.Repeat(chars, 7)
+            .Select(s => s[random.Next(s.Length)]).ToArray());
+    }
+}
