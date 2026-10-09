@@ -28,5 +28,8 @@ namespace Encryption.Models.SQL
         public bool BurnOnRead { get; set; } = false;
         public bool IsActive { get; set; } = true;
 
+        [Timestamp]
+        public byte[]? Rowversion { get; set; }
+
     }
 }

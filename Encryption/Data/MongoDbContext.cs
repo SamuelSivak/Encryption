@@ -1,5 +1,5 @@
 ﻿using MongoDB.Driver;
-using Encryption.Models.Mongo;
+using Encryption.Models.MongoDB;
 using Encryption.Interfaces;
 
 

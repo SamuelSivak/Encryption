@@ -6,6 +6,7 @@ using Encryption.Models.SQL;
 using Encryption.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Driver;
+using System.Security.Cryptography;
 
 namespace Encryption.Services;
 
@@ -15,6 +16,7 @@ public class LinkService : ILinkService
     private readonly IMongoDbContext _mongoDbContext;
     private readonly IEncryptionService _encryptionService;
     private readonly ICacheService _cacheService;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<LinkService> _logger;
 
     public LinkService(
@@ -22,18 +24,20 @@ public class LinkService : ILinkService
         IMongoDbContext mongoDbContext,
         IEncryptionService encryptionService,
         ICacheService cacheService,
+        IConfiguration configuration,
         ILogger<LinkService> logger)
     {
         _sqlDbContext = sqlDbContext;
         _mongoDbContext = mongoDbContext;
         _encryptionService = encryptionService;
         _cacheService = cacheService;
+        _configuration = configuration;
         _logger = logger;
     }
 
     public async Task<CreateLinkResponseDto> CreateEncryptedLinkAsync(CreateLinkRequestDto dto, string ownerUserId)
     {
-        string shortCode = GenerateShortCode();
+        string shortCode = await GenerateShortCode();
 
         var encResult = _encryptionService.Encrypt(dto.OriginalUrl, dto.Passphrase);
 
@@ -48,7 +52,7 @@ public class LinkService : ILinkService
             OwnerUserId = ownerUserId,
             CreatedAt = DateTime.UtcNow,
             ExpiresAt = expiresAt,
-            MaxAccessCount = dto.MaxAccessCount,
+            MaxAccessCount = dto.MaxAccessCount ?? 0,
             BurnOnRead = dto.BurnOnRead,
             IsActive = true
         };
@@ -86,7 +90,7 @@ public class LinkService : ILinkService
             .FirstOrDefaultAsync(l => l.ShortCode == shortCode && l.IsActive);
 
         if (meta == null)
-            throw new KeyNotFoundException("");
+            throw new KeyNotFoundException("Link was not found or is no longer active.");
 
         if (meta.ExpiresAt.HasValue && meta.ExpiresAt.Value < DateTime.UtcNow)
         {
@@ -118,7 +122,6 @@ public class LinkService : ILinkService
         }
 
         string decryptedUrl;
-        bool success = true;
         string? failureReason = null;
 
         try
@@ -131,8 +134,7 @@ public class LinkService : ILinkService
                 dto.Passphrase);
         }
         catch (Exception ex)
-        {
-            success = false;
+        { 
             failureReason = ex.Message;
 
             await LogAccessAttemptAsync(shortCode, clientIp, userAgent, false, failureReason);
@@ -160,13 +162,14 @@ public class LinkService : ILinkService
         {
             OriginalUrl = decryptedUrl,
             RemainingAccesses = remaining,
-            IsBurned = isBurned
+            isBurned = isBurned
         };
     }
 
     public async Task<IEnumerable<CreateLinkResponseDto>> GetUserLinksAsync(string userId)
     {
         var links = await _sqlDbContext.EncryptedLinkMetas
+            .AsNoTracking()
             .Where(l => l.OwnerUserId == userId && l.IsActive)
             .OrderByDescending(l => l.CreatedAt)
             .ToListAsync();
@@ -181,6 +184,7 @@ public class LinkService : ILinkService
 
     private async Task LogAccessAttemptAsync(string shortCode, string clientIp, string userAgent, bool success, string? failureReason)
     {
+        string ippepper = _configuration["IpHashPepper"] ?? throw new InvalidOperationException("IP hash pepper is not configured.");
         var filter = Builders<EncryptedLinkDocument>.Filter.Eq(d => d.ShortCode, shortCode);
         var update = Builders<EncryptedLinkDocument>.Update.Push(d => d.AccessLogs, new LinkAccessLog
         {
@@ -194,11 +198,21 @@ public class LinkService : ILinkService
         await _mongoDbContext.EncryptedLinks.UpdateOneAsync(filter, update);
     }
 
-    private static string GenerateShortCode()
+    private async Task<string> GenerateShortCode()
     {
         const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        var random = new Random();
-        return new string(Enumerable.Repeat(chars, 7)
-            .Select(s => s[random.Next(s.Length)]).ToArray());
+        const int codeLength = 7;
+        const int maxAttempts = 5;
+        for(int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            string code = RandomNumberGenerator.GetString(chars, codeLength);
+            bool exists = await _sqlDbContext.EncryptedLinkMetas.AnyAsync(l => l.ShortCode == code);
+
+            if(!exists)
+            {
+                return code;
+            }
+        }
+        throw new InvalidOperationException("Failed to generate a unique short code.");
     }
 }
