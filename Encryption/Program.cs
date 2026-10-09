@@ -35,6 +35,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 
 builder.Services.AddScoped<ICacheService, RedisCacheService>();
 builder.Services.AddScoped<ILinkService, LinkService>();
+builder.Services.AddScoped<IEncryptionService, EncryptionService>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
