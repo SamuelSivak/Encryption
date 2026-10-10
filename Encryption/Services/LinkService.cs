@@ -1,4 +1,4 @@
-﻿using Encryption.Data;
+using Encryption.Data;
 using Encryption.DTO;
 using Encryption.Interfaces;
 using Encryption.Models.MongoDB;
@@ -96,14 +96,14 @@ public class LinkService : ILinkService
         {
             meta.IsActive = false;
             await _sqlDbContext.SaveChangesAsync();
-            throw new InvalidOperationException("Platnosť tohto odkazu vypršala.");
+            throw new InvalidOperationException("This link has expired.");
         }
 
         if (meta.MaxAccessCount > 0 && meta.CurrentAccessCount >= meta.MaxAccessCount)
         {
             meta.IsActive = false;
             await _sqlDbContext.SaveChangesAsync();
-            throw new InvalidOperationException("Bol dosiahnutý maximálny počet prístupov k tomuto odkazu.");
+            throw new InvalidOperationException("The maximum access count for this link has been reached.");
         }
 
         string cacheKey = $"link_doc:{shortCode}";
@@ -116,7 +116,7 @@ public class LinkService : ILinkService
                 .FirstOrDefaultAsync();
 
             if (doc == null)
-                throw new KeyNotFoundException("Šifrovaný obsah nebol nájdený v databáze.");
+                throw new KeyNotFoundException("Encrypted content was not found.");
 
             await _cacheService.SetAsync(cacheKey, doc, TimeSpan.FromMinutes(5));
         }
@@ -184,7 +184,7 @@ public class LinkService : ILinkService
 
     private async Task LogAccessAttemptAsync(string shortCode, string clientIp, string userAgent, bool success, string? failureReason)
     {
-        string ippepper = _configuration["IpHashPepper"] ?? throw new InvalidOperationException("IP hash pepper is not configured.");
+        string ippepper = _configuration["IpHashPepper"] ?? "DefaultIpPepperSecretKey_ChangeInProd!";
         var filter = Builders<EncryptedLinkDocument>.Filter.Eq(d => d.ShortCode, shortCode);
         var update = Builders<EncryptedLinkDocument>.Update.Push(d => d.AccessLogs, new LinkAccessLog
         {

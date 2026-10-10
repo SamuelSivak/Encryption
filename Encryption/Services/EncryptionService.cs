@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.Security.Cryptography;
 using Encryption.Services.Interfaces;
 
@@ -65,9 +65,9 @@ public class EncryptionService : IEncryptionService
             aesGcm.Decrypt(iv, cipherBytes, tag, plainBytes);
             return Encoding.UTF8.GetString(plainBytes);
         } 
-        catch(CryptographicException)
+        catch (CryptographicException)
         {
-            throw new InvalidOperationException("Decipher went wrong");
+            throw new InvalidOperationException("Decryption failed. Invalid passphrase or corrupted data.");
         }
     }
 

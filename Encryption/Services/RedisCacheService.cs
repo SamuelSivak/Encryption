@@ -27,38 +27,68 @@ public class RedisCacheService : ICacheService
 
     public async Task<T?> GetAsync<T>(string key)
     {
-        RedisValue value = await _database.StringGetAsync(key);
+        try
+        {
+            RedisValue value = await _database.StringGetAsync(key);
 
-        if (!value.HasValue)
+            if (!value.HasValue)
+            {
+                return default;
+            }
+            return JsonSerializer.Deserialize<T>(value.ToString(), JsonOptions);
+        }
+        catch (RedisException)
         {
             return default;
         }
 
-        return JsonSerializer.Deserialize<T>(value.ToString(), JsonOptions);
     }
 
     public async Task SetAsync<T>(string key, T value, TimeSpan? expiry = null)
     {
-        string json = JsonSerializer.Serialize(value, JsonOptions);
-        var expiration = expiry.HasValue ? (Expiration)expiry.Value : Expiration.Default;
-        await _database.StringSetAsync(key, json, expiration);
+        try
+        {
+            string json = JsonSerializer.Serialize(value, JsonOptions);
+            var expiration = expiry.HasValue ? (Expiration)expiry.Value : Expiration.Default;
+            await _database.StringSetAsync(key, json, expiration);
+        }
+        catch (RedisException)
+        {
+        }
+        
     }
 
     public async Task RemoveAsync(string key)
     {
-        await _database.KeyDeleteAsync(key);
+        try
+        {
+            await _database.KeyDeleteAsync(key);
+        }
+
+        catch (RedisException)
+        {
+
+        }
     }
 
     public async Task<bool> IncrementRateLimitAsync(string key, TimeSpan window, int maxPermits)
     {
-        var script = LuaScript.Prepare(RateLimitScript);
-        var result = await _database.ScriptEvaluateAsync(script, new
+        try
         {
-            key = (RedisKey)key,
-            expiry = (long)window.TotalMilliseconds
-        });
+            var script = LuaScript.Prepare(RateLimitScript);
+            var result = await _database.ScriptEvaluateAsync(script, new
+            {
+                key = (RedisKey)key,
+                expiry = (long)window.TotalMilliseconds
+            });
 
-        long currentCount = (long)result;
-        return currentCount <= maxPermits;
+            long currentCount = (long)result;
+            return currentCount <= maxPermits;
+        }
+        catch (RedisException)
+        {
+            return true;
+        }
+        
     }
 }

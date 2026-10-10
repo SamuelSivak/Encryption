@@ -1,19 +1,18 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
-namespace Encryption.DTO
+namespace Encryption.DTO;
+
+public class RegisterRequest
 {
-    public class RegisterRequest
-    {
-        [Required(ErrorMessage = "Email je povinný")]
-        [EmailAddress(ErrorMessage = "Neplatný email")]
-        public string Email { get; set; } = string.Empty;
+    [Required(ErrorMessage = "Email is required.")]
+    [EmailAddress(ErrorMessage = "Invalid email format.")]
+    public string Email { get; set; } = string.Empty;
 
-        [Required(ErrorMessage = "Heslo je povinné")]
-        [MinLength(8, ErrorMessage = "Heslo musí mať minimálne 8 znakov")]
-        public string Password { get; set; } = string.Empty;
+    [Required(ErrorMessage = "Password is required.")]
+    [MinLength(8, ErrorMessage = "Password must be at least 8 characters long.")]
+    public string Password { get; set; } = string.Empty;
 
-        [Required(ErrorMessage = "Potvrdenie hesla je povinné")]
-        [Compare("Password", ErrorMessage = "Heslá sa nezhodujú")]
-        public string ConfirmPassword { get; set; } = string.Empty;
-    }
+    [Required(ErrorMessage = "Confirm password is required.")]
+    [Compare("Password", ErrorMessage = "Passwords do not match.")]
+    public string ConfirmPassword { get; set; } = string.Empty;
 }

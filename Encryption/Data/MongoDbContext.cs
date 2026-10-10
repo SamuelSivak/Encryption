@@ -21,7 +21,7 @@ namespace Encryption.Data
             var client = new MongoClient(connectionString);
             _database = client.GetDatabase(databaseName);
 
-            CreateIndexes();
+            //CreateIndexes();
 
         }
 

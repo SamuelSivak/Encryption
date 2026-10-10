@@ -1,14 +1,13 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
-namespace Encryption.DTO
+namespace Encryption.DTO;
+
+public class LoginRequest
 {
-    public class LoginRequest
-    {
-        [Required(ErrorMessage = "Email je povinný")]
-        [EmailAddress(ErrorMessage = "Neplatný email")]
-        public string Email { get; set; } = string.Empty;
+    [Required(ErrorMessage = "Email is required.")]
+    [EmailAddress(ErrorMessage = "Invalid email format.")]
+    public string Email { get; set; } = string.Empty;
 
-        [Required(ErrorMessage = "Heslo je povinné")]
-        public string Password { get; set; } = string.Empty;
-    }
+    [Required(ErrorMessage = "Password is required.")]
+    public string Password { get; set; } = string.Empty;
 }
