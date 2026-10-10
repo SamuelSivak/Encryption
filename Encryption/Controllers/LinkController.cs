@@ -58,6 +58,8 @@ public class LinksController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<DecryptLinkResponseDto>> DecryptLink(
         [FromRoute] string shortCode,
         [FromBody] DecryptLinkRequestDto dto)
@@ -91,6 +93,14 @@ public class LinksController : ControllerBase
         catch (InvalidOperationException ex)
         {
             _logger.LogWarning("Invalid operation when decrypting {ShortCode}: {Message}", shortCode, ex.Message);
+            if (ex.Message.Contains("Too many decrypt attempts"))
+            {
+                return StatusCode(StatusCodes.Status429TooManyRequests, new { message = ex.Message });
+            }
+            if (ex.Message.Contains("concurrent request"))
+            {
+                return StatusCode(StatusCodes.Status409Conflict, new { message = ex.Message });
+            }
             return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex)

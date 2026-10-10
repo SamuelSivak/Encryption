@@ -1,6 +1,7 @@
 using System.Text;
 using System.Security.Cryptography;
 using Encryption.Services.Interfaces;
+using Konscious.Security.Cryptography;
 
 namespace Encryption.Services;
 
@@ -10,7 +11,9 @@ public class EncryptionService : IEncryptionService
     private const int SaltSizeBytes = 16; // 128 bits
     private const int IvSizeBytes = 12; // 96 bits for AES-GCM
     private const int TagSizeBytes = 16; // 128 bits for AES-GCM
-    private const int Pbkdf2Iterations = 100_000; //  for PBKDF2
+    private const int Argon2Iterations = 3;
+    private const int Argon2MemorySizeKb = 65536;
+    private const int Argon2DegreeOfParallelism = 4;
 
     private readonly IConfiguration _configuration;
 
@@ -84,12 +87,14 @@ public class EncryptionService : IEncryptionService
 
     private static byte[] DeriveKey(string passphrase, byte[] salt)
     {
-        return Rfc2898DeriveBytes.Pbkdf2(
-            passphrase,
-            salt,
-            Pbkdf2Iterations,
-            HashAlgorithmName.SHA512,
-            KeySizeBytes);
+        using var argon2 = new Argon2id(Encoding.UTF8.GetBytes(passphrase))
+        {
+            Salt = salt,
+            DegreeOfParallelism = Argon2DegreeOfParallelism,
+            MemorySize = Argon2MemorySizeKb,
+            Iterations = Argon2Iterations
+        };
+        return argon2.GetBytes(KeySizeBytes);
     }
 
 }

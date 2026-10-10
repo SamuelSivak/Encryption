@@ -7,12 +7,14 @@ using Encryption.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Driver;
 using System.Security.Cryptography;
+using Microsoft.EntityFrameworkCore;
 
 namespace Encryption.Services;
 
 public class LinkService : ILinkService
 {
     private readonly AppDbContext _sqlDbContext;
+    private readonly AppReadDbContext _readDbContext;
     private readonly IMongoDbContext _mongoDbContext;
     private readonly IEncryptionService _encryptionService;
     private readonly ICacheService _cacheService;
@@ -21,6 +23,7 @@ public class LinkService : ILinkService
 
     public LinkService(
         AppDbContext sqlDbContext,
+        AppReadDbContext readDbContext,
         IMongoDbContext mongoDbContext,
         IEncryptionService encryptionService,
         ICacheService cacheService,
@@ -28,6 +31,7 @@ public class LinkService : ILinkService
         ILogger<LinkService> logger)
     {
         _sqlDbContext = sqlDbContext;
+        _readDbContext = readDbContext;
         _mongoDbContext = mongoDbContext;
         _encryptionService = encryptionService;
         _cacheService = cacheService;
@@ -85,6 +89,15 @@ public class LinkService : ILinkService
 
     public async Task<DecryptLinkResponseDto> DecryptLinkAsync(string shortCode, DecryptLinkRequestDto dto, string clientIp, string userAgent)
     {
+
+        string rateLimitKey = $"ratelimit:decrypt:{clientIp}:{shortCode}";
+        bool isAllowed = await _cacheService.IncrementRateLimitAsync(rateLimitKey, TimeSpan.FromMinutes(2), 5);
+
+        if (!isAllowed)
+        {
+            _logger.LogWarning("Rate limit exceeded for IP {ClientIp} on link {ShortCode}", clientIp, shortCode);
+            throw new InvalidOperationException("Too many decrypt attempts. Please try again later.");
+        }
 
         var meta = await _sqlDbContext.EncryptedLinkMetas
             .FirstOrDefaultAsync(l => l.ShortCode == shortCode && l.IsActive);
@@ -151,8 +164,15 @@ public class LinkService : ILinkService
             isBurned = true;
             await _cacheService.RemoveAsync(cacheKey);
         }
-
-        await _sqlDbContext.SaveChangesAsync();
+        try
+        {
+            await _sqlDbContext.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            _logger.LogWarning("Concurrency conflict detected while updating link {ShortCode}", shortCode);
+            throw new InvalidOperationException("This link was accessed or burned by another concurrent request.");
+        }
 
         await LogAccessAttemptAsync(shortCode, clientIp, userAgent, true, null);
 
@@ -168,18 +188,18 @@ public class LinkService : ILinkService
 
     public async Task<IEnumerable<CreateLinkResponseDto>> GetUserLinksAsync(string userId)
     {
-        var links = await _sqlDbContext.EncryptedLinkMetas
-            .AsNoTracking()
+        var links = await _readDbContext.EncryptedLinkMetas
             .Where(l => l.OwnerUserId == userId && l.IsActive)
             .OrderByDescending(l => l.CreatedAt)
+            .Select(l => new CreateLinkResponseDto
+            {
+                ShortCode = l.ShortCode, 
+                FullUrl = $"/api/links/{l.ShortCode}",
+                ExpiresAt = l.ExpiresAt
+            })
             .ToListAsync();
 
-        return links.Select(l => new CreateLinkResponseDto
-        {
-            ShortCode = l.ShortCode,
-            FullUrl = $"/api/links/{l.ShortCode}",
-            ExpiresAt = l.ExpiresAt
-        });
+        return links;
     }
 
     private async Task LogAccessAttemptAsync(string shortCode, string clientIp, string userAgent, bool success, string? failureReason)
@@ -201,13 +221,12 @@ public class LinkService : ILinkService
     private async Task<string> GenerateShortCode()
     {
         const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        const int codeLength = 7;
-        const int maxAttempts = 5;
-        for(int attempt = 0; attempt < maxAttempts; attempt++)
-        {
-            string code = RandomNumberGenerator.GetString(chars, codeLength);
-            bool exists = await _sqlDbContext.EncryptedLinkMetas.AnyAsync(l => l.ShortCode == code);
+        
 
+        for(int i = 0; i < 5; i++)
+        {
+            string code = RandomNumberGenerator.GetString(chars, 7);
+            bool exists = await _readDbContext.EncryptedLinkMetas.AnyAsync(l => l.ShortCode == code);
             if(!exists)
             {
                 return code;
