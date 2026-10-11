@@ -7,7 +7,6 @@ using Encryption.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Driver;
 using System.Security.Cryptography;
-using Microsoft.EntityFrameworkCore;
 
 namespace Encryption.Services;
 
@@ -75,10 +74,17 @@ public class LinkService : ILinkService
             CreatedAt = DateTime.UtcNow
         };
 
-        await _mongoDbContext.EncryptedLinks.InsertOneAsync(doc);
-
-        _logger.LogInformation("Created new encrypted link with ShortCode: {ShortCode} for user: {UserId}", shortCode, ownerUserId);
-
+        try
+        {
+            await _mongoDbContext.EncryptedLinks.InsertOneAsync(doc);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to insert document into MongoDB. Rolling back SQL metadata for shortCode: {ShortCode}", shortCode);
+            _sqlDbContext.EncryptedLinkMetas.Remove(meta);
+            await _sqlDbContext.SaveChangesAsync();
+            throw;
+        }
         return new CreateLinkResponseDto
         {
             ShortCode = shortCode,
@@ -209,12 +215,11 @@ public class LinkService : ILinkService
         var update = Builders<EncryptedLinkDocument>.Update.Push(d => d.AccessLogs, new LinkAccessLog
         {
             Timestamp = DateTime.UtcNow,
-            IpAddressHash = _encryptionService.GenerateBlindIndex(clientIp, "IpHashPepper"),
+            IpAddressHash = _encryptionService.GenerateBlindIndex(clientIp, ippepper),
             UserAgent = userAgent,
             Success = success,
             FailureReason = failureReason
         });
-
         await _mongoDbContext.EncryptedLinks.UpdateOneAsync(filter, update);
     }
 

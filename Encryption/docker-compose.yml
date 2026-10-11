@@ -1,0 +1,83 @@
+services:
+  redis:
+    image: redis:alpine
+    container_name: encryption-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  api-node-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: encryption-api-1
+    env_file:
+      - .env
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__Redis=redis:6379,abortConnect=false
+      - ConnectionStrings__SqlMaster=Server=host.docker.internal;Database=EncryptionDb;Trusted_Connection=True;TrustServerCertificate=True;
+      - ConnectionStrings__SqlReplica=Server=host.docker.internal;Database=EncryptionDb;Trusted_Connection=True;TrustServerCertificate=True;
+      - ConnectionStrings__MongoDb=${MONGODB_CONNECTION_STRING}
+      - Jwt__Key=${JWT_KEY}
+      - IpHashPepper=${IP_HASH_PEPPER}
+    depends_on:
+      - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  api-node-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: encryption-api-2
+    env_file:
+      - .env
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__Redis=redis:6379,abortConnect=false
+      - ConnectionStrings__SqlMaster=Server=host.docker.internal;Database=EncryptionDb;Trusted_Connection=True;TrustServerCertificate=True;
+      - ConnectionStrings__SqlReplica=Server=host.docker.internal;Database=EncryptionDb;Trusted_Connection=True;TrustServerCertificate=True;
+      - ConnectionStrings__MongoDb=${MONGODB_CONNECTION_STRING}
+      - Jwt__Key=${JWT_KEY}
+      - IpHashPepper=${IP_HASH_PEPPER}
+    depends_on:
+      - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  api-node-3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: encryption-api-3
+    env_file:
+      - .env
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__Redis=redis:6379,abortConnect=false
+      - ConnectionStrings__SqlMaster=Server=host.docker.internal;Database=EncryptionDb;Trusted_Connection=True;TrustServerCertificate=True;
+      - ConnectionStrings__SqlReplica=Server=host.docker.internal;Database=EncryptionDb;Trusted_Connection=True;TrustServerCertificate=True;
+      - ConnectionStrings__MongoDb=${MONGODB_CONNECTION_STRING}
+      - Jwt__Key=${JWT_KEY}
+      - IpHashPepper=${IP_HASH_PEPPER}
+    depends_on:
+      - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  load-balancer:
+    image: nginx:alpine
+    container_name: encryption-load-balancer
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api-node-1
+      - api-node-2
+      - api-node-3
+    restart: unless-stopped

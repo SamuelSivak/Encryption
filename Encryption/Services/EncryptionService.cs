@@ -7,10 +7,10 @@ namespace Encryption.Services;
 
 public class EncryptionService : IEncryptionService
 {
-    private const int KeySizeBytes = 32; // 256 bits
-    private const int SaltSizeBytes = 16; // 128 bits
-    private const int IvSizeBytes = 12; // 96 bits for AES-GCM
-    private const int TagSizeBytes = 16; // 128 bits for AES-GCM
+    private const int KeySizeBytes = 32; 
+    private const int SaltSizeBytes = 16; 
+    private const int IvSizeBytes = 12; 
+    private const int TagSizeBytes = 16; 
     private const int Argon2Iterations = 3;
     private const int Argon2MemorySizeKb = 65536;
     private const int Argon2DegreeOfParallelism = 4;
@@ -22,13 +22,13 @@ public class EncryptionService : IEncryptionService
         _configuration = configuration;
     }
 
-    public EncryptionResult Encrypt(string plaiUrl, string passphrase)
+    public EncryptionResult Encrypt(string plainUrl, string passphrase)
     {
         byte[] salt = RandomNumberGenerator.GetBytes(SaltSizeBytes);
         byte[] iv = RandomNumberGenerator.GetBytes(IvSizeBytes);
 
         byte[] key = DeriveKey(passphrase, salt);
-        byte[] plainBytes = Encoding.UTF8.GetBytes(plaiUrl);
+        byte[] plainBytes = Encoding.UTF8.GetBytes(plainUrl);
         byte[] cipherBytes = new byte[plainBytes.Length];
         byte[] tag = new byte[TagSizeBytes];
 
@@ -38,7 +38,7 @@ public class EncryptionService : IEncryptionService
         }
 
         string pepper = _configuration["Encryption:PepperSecret"] ?? "DefaultSecretPepperKey_ChangeInProd_123!";
-        string blindIndex = GenerateBlindIndex(plaiUrl, pepper);
+        string blindIndex = GenerateBlindIndex(plainUrl, pepper);
 
         return new EncryptionResult(
             CiphertextBase64: Convert.ToBase64String(cipherBytes),

@@ -2,43 +2,23 @@
 using Encryption.Models.MongoDB;
 using Encryption.Interfaces;
 
+namespace Encryption.Data;
 
-
-namespace Encryption.Data
+public class MongoDbContext : IMongoDbContext
 {
-    public class MongoDbContext : IMongoDbContext
+    private readonly IMongoDatabase _database;
+
+    public MongoDbContext(IConfiguration configuration)
     {
-        private readonly IMongoDatabase _database;
+        string connectionString = configuration.GetConnectionString("MongoDb")
+            ?? "mongodb://localhost:27017";
 
-        public MongoDbContext(IConfiguration configuration)
-        { 
-            string connectionString = configuration.GetConnectionString("MongoDb")
-                ?? "mongodb://localhost:27017";
+        string databaseName = configuration.GetValue<string>("MongoDbDatabaseName")
+            ?? "EncryptionDb";
 
-            string databaseName = configuration.GetValue<string>("MongoDbDatabaseName")
-                ?? "EncryptionDb";
-
-            var client = new MongoClient(connectionString);
-            _database = client.GetDatabase(databaseName);
-
-            //CreateIndexes();
-
-        }
-
-        public IMongoCollection<EncryptedLinkDocument> EncryptedLinks =>
-                _database.GetCollection<EncryptedLinkDocument>("EncryptedLinks");
-
-        private void CreateIndexes()
-        {
-            var shortCodeKeys = Builders<EncryptedLinkDocument>.IndexKeys.Ascending(doc => doc.ShortCode);
-            var shortCodeIndexModel = new CreateIndexModel<EncryptedLinkDocument>(
-                shortCodeKeys,
-                new CreateIndexOptions { Unique = true});
-
-            var userIdKeys = Builders<EncryptedLinkDocument>.IndexKeys.Ascending(doc => doc.UserId);
-            var userIdIndexModel = new CreateIndexModel<EncryptedLinkDocument>(userIdKeys);
-
-            EncryptedLinks.Indexes.CreateMany(new[] { shortCodeIndexModel, userIdIndexModel });
-        }
+        var client = new MongoClient(connectionString);
+        _database = client.GetDatabase(databaseName);
     }
+    public IMongoCollection<EncryptedLinkDocument> EncryptedLinks =>
+            _database.GetCollection<EncryptedLinkDocument>("EncryptedLinks");
 }
